@@ -6,7 +6,7 @@ var bodyParser = require('body-parser');
 
 // 创建express应用
 var app = express();
-
+app.disable('x-powered-by');
 // 使用body-parser中间件解析json格式的请求体
 app.use(bodyParser.json());
 
@@ -35,10 +35,38 @@ var db = new sqlite3.Database('./mcu.db', sqlite3.OPEN_READWRITE | sqlite3.OPEN_
   }
 });
 
+let TRANSACTION_STACK = [];
+let sleep = function () {
+  return new Promise(setTimeout())
+}
+
 // 定义一个Promise化的db.run方法
 function run(sql, params) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    if (sql == "BEGIN TRANSACTION") {
+      let STACK = {
+        await: function() {
+          var self = this;
+          return new Promise(function (resolve, reject) {
+            self._resolve = resolve;
+            self._reject = reject;
+          })
+        },
+        resolve: function() {
+          this && this._resolve && this._resolve();
+        }
+      };
+      TRANSACTION_STACK.push(STACK)
+      if (TRANSACTION_STACK[0] != STACK) {
+        const pre = TRANSACTION_STACK[TRANSACTION_STACK.length - 2];
+        await pre.await();
+      }
+    }
     db.run(sql, params, function (err) {
+      if (sql == "COMMIT" || sql == "ROLLBACK") {
+        const pre = TRANSACTION_STACK.shift();
+        pre && pre.resolve();
+      }
       if (err) {
         reject(err);
       } else {
@@ -79,8 +107,8 @@ async function initData() {
   var sql1 = `INSERT INTO user(username, nickname, role)
               VALUES(?, ?, ?)`;
 
-  var sql2 = `INSERT INTO chord_progression(song_name, chord_progression, creator, share_status)
-              VALUES(?, ?, ?, ?)`;
+  var sql2 = `INSERT INTO chord_progression(song_name, chord_progression, creator, share_status, audit_status)
+              VALUES(?, ?, ?, ?, ?)`;
 
   // 开启事务                
   try {
@@ -93,11 +121,11 @@ async function initData() {
     await run(sql1, ['user2', 'User2', 'user']);
 
     // 插入五条和弦进行
-    await run(sql2, ['Let it be', '[{"chords":[{"root":"C","notes":["C","E","G","E"],"beats":[16,16,16,16]},{"root":"G","notes":["G","B","D","B"],"beats":[16,16,16,16]},{"root":"Am","notes":["A","C","E","C"],"beats":[16,16,16,16]},{"root":"F","notes":["F","A","C","A"],"beats":[16,16,16,16]}],"loop":2},{"chords":[{"root":"C","notes":["C","E","G","E"],"beats":[16,16,16,16]},{"root":"G","notes":["G","B","D","B"],"beats":[16,16,16,16]},{"root":"F","notes":["F","A","C","A"],"beats":[24,8]},{"root":"C","notes":["C","E","G","E"],"beats":[32]}],"loop":1}]', 2, 'public']);
-    await run(sql2, ['Canon in D', '[{"chords":[{"root":"D","notes":["D","F#","A"],"beats":[32]},{"root":"A/C#","notes":["C#","E","A"],"beats":[32]},{"root":"Bm/F#","notes":["F#","A","D"],"beats":[32]},{"root":"F#m/A","notes":["A","C#","F#"],"beats":[32]}],"loop":1},{"chords":[{"root":"G/D","notes":["D","G","B"],"beats":[32]},{"root":"D/F#","notes":["F#","A","D"],"beats":[32]},{"root":"G/A/B/D/F#(omit3)","notes":["A,B,D,F#"],"beats":[32]},{"root":"A/C#/E/G#(omit5)","notes":["C#,E,G#"],"beats":[32]}],"loop":1}]', 2, 'limited']);
-    await run(sql2, ['Happy birthday', '[{"chords":[{"root":"C", "notes":["C", "E", "G"], "beats":[8]}, {"root":"C", "notes":["C", "E", "G"], "beats":[8]}, {"root":"G", "notes":["G", "B", "D"], "beats":[8]}, {"root":"G", "notes":["G", "B", "D"], "beats":[8]}], "loop":1}, {"chords":[{"root":"A", "notes":["A", "C#", "E"], "beats":[8]}, {"root":"A", "notes":["A", "C#", "E"], "beats":[8]}, {"root":"G", "notes":["G", "B", "D"], "beats":[12]}, {"root":null,"notes":null,"beats":[4]}], "loop":1}, {"chords":[{"root":"F", "notes":["F", "A", "C"], "beats":[8]}, {"root":"F", "notes":["F", "A", "C"], "beats":[8]}, {"root":"E", "notes":["E", "G#", "B"], "beats":[8]}, {"root":"E", "notes":["E", "G#", "B"], "beats":[8]}], "loop":1}, {"chords":[{"root":"D", "notes":["D", "F#", "A"],"beats":[8]}, {"root":"D", "notes":["D", "F#", "A"],"beats":[8]}, {"root":"C", "notes":["C", "E", "G"],"beats":[12]}, {"root":null,"notes":null,"beats":[4]}], loop:1}]', 3, 'private']);
-    await run(sql2, ['Twinkle twinkle little star', '[{"chords":[{"root":"C", notes:["CEG"], beats:[0x10]}, {"root":"C", notes:["CEG"], beats:[0x10]}, {"root":"G", notes:["GBD"], beats:[0x10]}, {"root":"G", notes:["GBD"], beats:[0x10]}], loop:1}, {"chords":[{"root":"A/C#", notes:["AC#E"], beats:[0x10]}, {"root":"A/C#", notes:["AC#E"], beats:[0x10]}, {"root":"G/E/B/D/F#", notes:["EBDF#"], beats:[0x18]}, {"root":null,"notes":null,"beats":[0x08]}], loop:1}, {"chords":[{"root":"F/A/C/E/G/Bb/D/F#", notes:["ACEGBbDF#"], beats:[0x10]}, {"root":"F/A/C/E/G/Bb/D/F#", notes:["ACEGBbDF#"], beats:[0x10]}, {"root":"E/G#/B/D/F#/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/E (omit3)", notes:["EGDBFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGb (omit3)"], beats:[0x10]}, {"root":"D/A/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E (omit5)", notes:["ADFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBD (omit5)"], beats:[0x10]}], loop:1}, {"chords":[{"root":"D/A/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E (omit5)", notes:["ADFAcEGBDFAcEGBDFAcEGBD (omit5)"], beats:[0x20]}, {"root":null,"notes":null,"beats":[0x20]}], loop:1}]', 3, 'public']);
-    await run(sql2, ['Someone like you', '[{"chords":[{"root":null,"notes":null,"beats":[0x20]},{"root":null,"notes":null,"beats":[0x20]},{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":-1}], loop:1}]', 2, 'private']);
+    await run(sql2, ['Let it be', '[{"chords":[{"root":"C","notes":["C","E","G","E"],"beats":[16,16,16,16]},{"root":"G","notes":["G","B","D","B"],"beats":[16,16,16,16]},{"root":"Am","notes":["A","C","E","C"],"beats":[16,16,16,16]},{"root":"F","notes":["F","A","C","A"],"beats":[16,16,16,16]}],"loop":2},{"chords":[{"root":"C","notes":["C","E","G","E"],"beats":[16,16,16,16]},{"root":"G","notes":["G","B","D","B"],"beats":[16,16,16,16]},{"root":"F","notes":["F","A","C","A"],"beats":[24,8]},{"root":"C","notes":["C","E","G","E"],"beats":[32]}],"loop":1}]', 2, 'public', 'pass']);
+    await run(sql2, ['Canon in D', '[{"chords":[{"root":"D","notes":["D","F#","A"],"beats":[32]},{"root":"A/C#","notes":["C#","E","A"],"beats":[32]},{"root":"Bm/F#","notes":["F#","A","D"],"beats":[32]},{"root":"F#m/A","notes":["A","C#","F#"],"beats":[32]}],"loop":1},{"chords":[{"root":"G/D","notes":["D","G","B"],"beats":[32]},{"root":"D/F#","notes":["F#","A","D"],"beats":[32]},{"root":"G/A/B/D/F#(omit3)","notes":["A,B,D,F#"],"beats":[32]},{"root":"A/C#/E/G#(omit5)","notes":["C#,E,G#"],"beats":[32]}],"loop":1}]', 2, 'limited', null]);
+    await run(sql2, ['Happy birthday', '[{"chords":[{"root":"C", "notes":["C", "E", "G"], "beats":[8]}, {"root":"C", "notes":["C", "E", "G"], "beats":[8]}, {"root":"G", "notes":["G", "B", "D"], "beats":[8]}, {"root":"G", "notes":["G", "B", "D"], "beats":[8]}], "loop":1}, {"chords":[{"root":"A", "notes":["A", "C#", "E"], "beats":[8]}, {"root":"A", "notes":["A", "C#", "E"], "beats":[8]}, {"root":"G", "notes":["G", "B", "D"], "beats":[12]}, {"root":null,"notes":null,"beats":[4]}], "loop":1}, {"chords":[{"root":"F", "notes":["F", "A", "C"], "beats":[8]}, {"root":"F", "notes":["F", "A", "C"], "beats":[8]}, {"root":"E", "notes":["E", "G#", "B"], "beats":[8]}, {"root":"E", "notes":["E", "G#", "B"], "beats":[8]}], "loop":1}, {"chords":[{"root":"D", "notes":["D", "F#", "A"],"beats":[8]}, {"root":"D", "notes":["D", "F#", "A"],"beats":[8]}, {"root":"C", "notes":["C", "E", "G"],"beats":[12]}, {"root":null,"notes":null,"beats":[4]}], loop:1}]', 3, 'private', null]);
+    await run(sql2, ['Twinkle twinkle little star', '[{"chords":[{"root":"C", notes:["CEG"], beats:[0x10]}, {"root":"C", notes:["CEG"], beats:[0x10]}, {"root":"G", notes:["GBD"], beats:[0x10]}, {"root":"G", notes:["GBD"], beats:[0x10]}], loop:1}, {"chords":[{"root":"A/C#", notes:["AC#E"], beats:[0x10]}, {"root":"A/C#", notes:["AC#E"], beats:[0x10]}, {"root":"G/E/B/D/F#", notes:["EBDF#"], beats:[0x18]}, {"root":null,"notes":null,"beats":[0x08]}], loop:1}, {"chords":[{"root":"F/A/C/E/G/Bb/D/F#", notes:["ACEGBbDF#"], beats:[0x10]}, {"root":"F/A/C/E/G/Bb/D/F#", notes:["ACEGBbDF#"], beats:[0x10]}, {"root":"E/G#/B/D/F#/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/Eb/Gb/Bb/Db/F/Ab/C/E (omit3)", notes:["EGDBFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGbBbdFAcEbGb (omit3)"], beats:[0x10]}, {"root":"D/A/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E (omit5)", notes:["ADFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBDFAcEGBD (omit5)"], beats:[0x10]}], loop:1}, {"chords":[{"root":"D/A/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E/G/B/D/F#/Ab/C/E (omit5)", notes:["ADFAcEGBDFAcEGBDFAcEGBD (omit5)"], beats:[0x20]}, {"root":null,"notes":null,"beats":[0x20]}], loop:1}]', 3, 'public', null]);
+    await run(sql2, ['Someone like you', '[{"chords":[{"root":null,"notes":null,"beats":[0x20]},{"root":null,"notes":null,"beats":[0x20]},{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"chords":[{"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2,"loop":2}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":4}],"loop":-1}], loop:1}]', 2, 'private', null]);
 
     await run("COMMIT");
     console.log('Inserted some data.');
@@ -134,6 +162,8 @@ async function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       share_status TEXT NOT NULL CHECK (share_status IN ('private', 'limited', 'public')),
       published_at DATETIME,
+      audit_status TEXT CHECK (audit_status IN ('pending', 'pass', 'nopass')),
+      audit_at DATETIME,
       FOREIGN KEY (creator) REFERENCES user (userid)
     )`);
     console.log('Created chord_progression table.');
@@ -214,7 +244,7 @@ async function startServer() {
                JOIN user AS u ON cp.creator = u.userid 
                LEFT JOIN chord_progression_tag AS cpt ON cp.id = cpt.chord_progression_id 
                LEFT JOIN tag AS t ON cpt.tag_id = t.id 
-               WHERE cp.share_status = 'public'`;
+               WHERE cp.share_status = 'public' and cp.audit_status = 'pass'`;
 
     try {
       var rows = await all(sql, []);
@@ -298,15 +328,17 @@ async function startServer() {
 
     // 定义SQL语句
     var sql1 = `INSERT INTO chord_progression(song_name, chord_progression, creator, share_status)
-                VALUES(?, ?, ?, 'private')`;
+    VALUES(?, ?, ?, 'private')`;
 
-    var sql2 = `INSERT INTO tag(tag_name)
-                VALUES(?)`;
+    var sql2 = `SELECT id FROM tag WHERE tag_name = ?`; // 查询标签表中是否存在指定的 tag_name
 
-    var sql3 = `INSERT INTO chord_progression_tag(chord_progression_id, tag_id)
-                VALUES(?, ?)`;
+    var sql3 = `INSERT INTO tag(tag_name)
+    VALUES(?)`; // 如果不存在，插入新的标签
 
-    // 开启事务                
+    var sql4 = `INSERT INTO chord_progression_tag(chord_progression_id, tag_id)
+    VALUES(?, ?)`; // 插入和弦进行标签关联表
+
+    // 开启事务 
     try {
 
       await run("BEGIN TRANSACTION");
@@ -315,9 +347,15 @@ async function startServer() {
       var lastId = result1.lastID;
 
       for (let tag of tags) {
-        var result2 = await run(sql2, [tag]);
-        var lastId2 = result2.lastID;
-        await run(sql3, [lastId, lastId2]);
+        var row = await get(sql2, [tag]); // 查询标签表中是否存在指定的 tag_name
+        var lastId2;
+        if (row) {
+          lastId2 = row.id; // 如果存在，获取其 id
+        } else {
+          var result2 = await run(sql3, [tag]); // 如果不存在，插入新的标签，并获取其 id
+          lastId2 = result2.lastID;
+        }
+        await run(sql4, [lastId, lastId2]); // 插入和弦进行标签关联表
       }
 
       await run("COMMIT");
@@ -328,6 +366,7 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
   // 定义更新接口， 只允许创建人对共享状态不是公开共享的记录进行更新
   app.put('/:id', async (req, res) => {
 
@@ -353,17 +392,19 @@ async function startServer() {
     }
 
     var sql1 = `UPDATE chord_progression SET song_name = ?, chord_progression = ?
-              WHERE id = ? AND creator = ? AND share_status <> 'public'`;
+    WHERE id = ? AND creator = ? AND share_status <> 'public'`;
 
-    var sql2 = `DELETE FROM chord_progression_tag WHERE chord_progression_id = ?`;
+    var sql2 = `DELETE FROM chord_progression_tag WHERE chord_progression_id = ?`; // 删除原来的和弦进行标签关联
 
-    var sql3 = `INSERT OR IGNORE INTO tag(tag_name)
-              VALUES(?)`;
+    var sql3 = `SELECT id FROM tag WHERE tag_name = ?`; // 查询标签表中是否存在指定的 tag_name
 
-    var sql4 = `INSERT INTO chord_progression_tag(chord_progression_id, tag_id)
-              VALUES(?, ?)`;
+    var sql4 = `INSERT INTO tag(tag_name)
+    VALUES(?)`; // 如果不存在，插入新的标签
 
-    // 开启事务                
+    var sql5 = `INSERT INTO chord_progression_tag(chord_progression_id, tag_id)
+    VALUES(?, ?)`; // 插入新的和弦进行标签关联
+
+    // 开启事务 
     try {
 
       await run("BEGIN TRANSACTION");
@@ -374,12 +415,18 @@ async function startServer() {
         return res.status(403).json({ error: "Update failed. No such record or not allowed to update." });
       }
 
-      await run(sql2, [id]);
+      await run(sql2, [id]); // 删除原来的和弦进行标签关联
 
       for (let tag of tags) {
-        var result2 = await run(sql3, [tag]);
-        var lastId2 = result2.lastID;
-        await run(sql4, [id, lastId2]);
+        var row = await get(sql3, [tag]); // 查询标签表中是否存在指定的 tag_name
+        var lastId2;
+        if (row) {
+          lastId2 = row.id; // 如果存在，获取其 id
+        } else {
+          var result2 = await run(sql4, [tag]); // 如果不存在，插入新的标签，并获取其 id
+          lastId2 = result2.lastID;
+        }
+        await run(sql5, [id, lastId2]); // 插入新的和弦进行标签关联
       }
 
       await run("COMMIT");
@@ -390,6 +437,7 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
 
   // 定义删除接口，只允许创建人对记录进行删除
   app.delete('/:id', async (req, res) => {
@@ -516,9 +564,17 @@ async function startServer() {
 
     // 获取请求参数中的id
     var id = req.params.id;
+    
+    var audit_status = req.body.audit_status;
 
-    var sql1 = `UPDATE chord_progression SET published_at = CURRENT_TIMESTAMP 
-             WHERE id = ? AND share_status = 'public' AND published_at IS NULL`;
+    // 验证参数是否合法
+    if (!audit_status || !['pass', 'nopass'].includes(audit_status)) {
+      return res.status(400).json({ error: 'Invalid audit status.' });
+    }
+    
+
+    var sql1 = `UPDATE chord_progression SET audit_status = ?, audit_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND share_status = 'public'`;
 
     var sql2 = `SELECT cp.*, u.nickname AS creator_name FROM chord_progression AS cp 
              JOIN user AS u ON cp.creator = u.userid 
@@ -529,7 +585,7 @@ async function startServer() {
 
       await run("BEGIN TRANSACTION");
 
-      var result1 = await run(sql1, [id]);
+      var result1 = await run(sql1, [audit_status, id]);
 
       if (result1.changes == 0) {
         return res.status(403).json({ error: "Audit failed. No such record or not allowed to audit." });
@@ -545,6 +601,8 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
+  app.generateToken = generateToken;
 
   // 定义生成token的方法，传入userid，返回包含userid的jwt token的AES加密后的base64的值
   function generateToken(userid) {
@@ -617,3 +675,4 @@ async function startServer() {
   }
 }
 
+module.exports = app;
