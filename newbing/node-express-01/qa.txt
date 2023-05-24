@@ -1,0 +1,32 @@
+需要一个nodejs的代码，这个代码实现和弦进行的一些web接口。 后端数据库使用SQLite，并且抽象化数据持久化，在将来我可能要换成MySQL来替换SQLite。 和弦进行有一些属性， 主键、歌曲名称、多个标签、和弦进行、创建人、创建时间、共享状态、发布时间，其中多个标签可以单独用一个表来存储，和弦进行是一个 ChordProgression 对象，请用一个json字段来存储， 共享状态有私有、有限共享、公开共享三个状态，有限共享人用另一个单独的表存储。目前需要提供以下接口：1. 公开共享查询接口，查询所有的公开共享数据；2. 有限共享查询接口，查询所有共享给当前登录人的数据； 3. 我的查询接口，查询创建人是当前登录人的数据；4. 创建接口，默认共享状态为私有； 5. 更新接口， 只允许创建人对共享状态不是公开共享的记录进行更新； 6. 删除接口，只允许创建人对记录进行删除； 7. 共享设置接口，只允许创建人对记录进行共享状态的修改； 8. 公开共享审核接口，对于修改共享状态为公开共享的记录，由管理员进行操作，对其进行审核，审核通过过才能由公开共享接口查询到。
+有一个用户表，有 username, nickname, role, userid 的字段，帮我写一个生成token的方法， 传入 userid， 返回 包含userid 的 jwt token 的ASE加密后的base64的值， 同时写一个从token中读取userid 的方法，  通过ASE解密后，验证jwttoken， 返回userid。 使用 getCurrentUser 为上面的和弦进行提供用户判定方法，getCurrentUser 方法从 header中获取 x-token 的值， 获取到userid， 正确之后用 userid 去数据库查询用户信息， 返回 用户表单条记录的json格式。
+生成随机的 JWT_SECRET AES_KEY AES_IV ，直接放到代码里。
+把初始化数据库的代码加上，要包含一个判断，不要重复初始化。
+请注意nodejs中有些执行流程需要等待异步方法执行完，你可以用 await async 来完成。
+
+对上面的代码进行重构：把 db.serialize db.run db.all db.get 等方法，进行 Promise 化，在使用的地方改用 await ，事务中使用 try catch 的语法， 在 catch 中去执行 rollback。
+
+-- 手动改一些错误
+
+增加一段代码，初始化一些数据：包含三个用户，一个管理员，两个普通用户；包含5条和弦进行。
+
+和弦进行的定义是这样的，只需要写出json就行，放入到初始化数据的代码里
+```javascript
+// 定义一个和弦类，包含根音、分解音和节拍
+class Chord {
+ constructor(root, notes, beats) {
+ this.root = root; // 根音，例如"C"
+ this.notes = notes; // 分解音，可以是分解的或合并的，例如["CEG", "CEG", "CEG", "CEG"]或["C", "E", "G", "E"]
+ this.beats = beats; // 节拍，可以是十六进制的，例如[0x10, 0x10, 0x10, 0x10]或[0x10, 0x10, 0x20]
+ }
+}
+
+// 定义一个和弦进行类，包含一个和弦或和弦进行的列表和一个循环次数
+class ChordProgression {
+ constructor(chords, loop) {
+ this.chords = chords; // 和弦或和弦进行的列表，例如[Chord1, Chord2, Chord3, Chord4]或[Chord1, Chord2, Progression1, Chord3]
+ this.loop = loop; // 循环次数，例如2
+ }
+}
+export { ChordProgression, Chord }
+```
